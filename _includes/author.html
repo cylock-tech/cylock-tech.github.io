@@ -1,0 +1,4 @@
+{% assign author = site[page.author] %}
+{% if author %}
+   <p class="author_title"><a href="{{author.web}}">{{author.name}}</a>  ·  {{ page.date | date: "%B %e, %Y" }}</p>
+{% endif %}
