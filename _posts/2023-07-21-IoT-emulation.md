@@ -8,7 +8,7 @@ categories: [IoT, Emulation]
 
 I device embedded e il mondo IoT diventano ogni anno più presenti nella vita quotidiana, e di conseguenza sempre più rilevanti nel mondo IT Sec. Prima di AI, prima del MetaVerso e ancora prima dei protocolli su Blockchain, l'argomento che più era trattato nel mondo IT era quello di Smart device e IoT. Potremmo dire che tutti gli argomenti sopra citati potrebbero essere in un futuro non troppo remoto, sempre più interconnessi tra di loro. Senza entrare nei meriti e demeriti, aspettivi positivi e negativi, ma solo oggettivamente parlando, tutto ciò sembra molto interessante.
 
-Nel seguente blog viene mostrato come emulare una parte del firmware dei router ASUS per replicare la vulnerabilità CVE-2020-36109.
+Nel seguente blog viene mostrato come emulare una parte del firmware dei router ASUS per replicare la vulnerabilità CVE-2020-36109 e CVE-2023-35086.
 
 <br />
 
@@ -215,7 +215,7 @@ Per comunicare lato client con la nvram viene usato `libnvram`, il quale espone 
 
 
 Per ovviare questo problema viene usata la tecnica di hooking tramite LD_PRELOAD facendo cross-compilation di questa libreria: [nvram-faker](https://github.com/tin-z/nvram-faker)
-Le entry chiave:valore di default vengono prese dal file `nvram.ini`, file generato da leak di utenti asus su forum e simili (e.g. "nvram show" site:pastebin.com). Lanciamo quindi i seguenti comandi `sudo chroot <path-rootfs_ubifs> ./qemu-arm-static -E LD_PRELOAD=./libnvram-faker.so -g 12345 ./usr/sbin/httpd -p 12234` e `sudo gdb-multiarch ./bin/busybox -q --nx -ex 'source ./.gdbinit-gef.py' -ex 'target remote 127.0.0.1:12345'`.
+Le entry chiave:valore di default vengono prese dal file `nvram.ini`, file generato da leak di utenti asus su forum e simili (e.g. "nvram show" site:pastebin.com). Lanciamo quindi i seguenti comandi `sudo chroot <path-rootfs_ubifs> ./qemu-arm-static -E LD_PRELOAD=./libnvram-faker.so -g 12345 ./usr/sbin/httpd -p 12234` e `sudo gdb-multiarch ./usr/sbin/httpd -q --nx -ex 'source ./.gdbinit-gef.py' -ex 'target remote 127.0.0.1:12345'`.
 
 <p align ="center">
   <img src="/images/2023-07/t17.png">
@@ -268,12 +268,12 @@ Per triggerare la vulnerabilità dobbiamo craftare una request con le seguenti c
 </p>
 <br/>
 
+
+### Considerazioni CVE-2020-36109
+
 Gli script per replicare l'ambiente di test e la PoC vengono forniti ai seguenti link: 
  - [PoC](https://github.com/sunn1day/CVE-2020-36109-POC)
  - [IoT toolbox repo](https://github.com/tin-z/IoT_toolbox/tree/main/pocs/ASUS)
-
-
-### Considerazioni ###
 
 Limitazioni exploit:
  - L'overflow accade tramite `str*` quindi non possiamo usare null dentro il payload
@@ -289,5 +289,55 @@ Make exploit great again:
 Patch:
  - Come descritto prima, la patch consiste nel limitare la size dei parametri POST tramite `strlcpy`.
 
+<br />
+
+----
+
+## CVE-2023-35086
+
+La CVE-2023-35086 identifica una vulnerabilità di format string presente nei modelli di router e versioni RT-AX56U V2: 3.0.0.4.386_50460 e RT-AC86U: 3.0.0.4_386_51529. Dal report si legge che la vulnerabilità è presente nella funzione do_detwan_cgi del servizio httpd. La vulnerabilità però è presente anche in altri modelli di router ASUS.
+
+Seguendo gli stessi step illustrati nella sezione [CVE-2020-36109](#CVE-2020-36109) siamo in grado di emulare una parte del firmware. La parte di string analysis rivela dove si trova la funzione che risponde alle request GET e POST verso l'uri `/detwan.cgi` e cioè `0x49258`
+
+<p align ="center">
+  <img src="/images/2023-07/t_1.jpg">
+</p>
+<br />
+
+Proviamo a decompilare la funzione con il decompilatore di ghidra che non mostra la funzione nella sua interezza, ma già notiamo i seguenti punti:
+ - `FUN_0001b70c` estrae il parametro passato dal client `action_mode`
+ - Il parametro viene usato come terzo argomento nella call `logmessage_normal` che è una funzione esterna esposta da libshared
+
+<p align ="center">
+  <img src="/images/2023-07/t_2.jpg">
+</p>
+<br />
+
+Cercando su github troviamo che il codice sorgente della funzione `logmessage_normal` è presente nel progetto asuswrt-merlin, in particolare nel file `asuswrt-merlin/release/src/router/shared/misc.c`. Come possiamo notare la funzione salva il contenuto del parametro http `action_mode` dentro la variabile locale `buf`, che a sua volta viene usata come secondo argomento nella call `syslog`
+
+<p align ="center">
+  <img src="/images/2023-07/t_3.jpg">
+</p>
+<br />
+
+Come si nota dal manuale però la syslog esposta da libc supporta le format string e quindi passando una format string sul parametro http `action_mode` siamo in grado triggerare questa vulnerabilità.
+
+<p align ="center">
+  <img src="/images/2023-07/t_4.jpg">
+</p>
+<br />
+
+Per replicare la poc lanciamo i seguenti comandi in due terminali separati: `sudo chroot <path-rootfs_ubifs> ./qemu-arm-static -E LD_PRELOAD=./libnvram-faker.so -g 12345 ./usr/sbin/httpd -p 12234` e `sudo gdb-multiarch ./usr/sbin/httpd -q --nx -ex 'source ./.gdbinit-gef.py' -ex 'target remote 127.0.0.1:12345'`.
+
+<p align ="center">
+  <img src="/images/2023-07/poc.gif">
+</p>
+<br />
+
+### Considerazioni CVE-2023-35086
+
+Gli script per replicare l'ambiente di test e la PoC vengono forniti ai seguenti link: 
+ - [PoC](https://github.com/tin-z/CVE-2023-35086-POC)
+ - [IoT toolbox repo](https://github.com/tin-z/IoT_toolbox/tree/main/pocs/ASUS)
 
 
